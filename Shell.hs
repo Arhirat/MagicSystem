@@ -33,32 +33,42 @@ run compile = do
 
 define :: String -> String -> Compile LogIO ()
 define n s = do
-	r <- lift $ parseL s
-	k <- getKind r
+	lr <- lift $ parseLR s
+--	liftIO $ print lr
+	l <- initL lr
+--	liftIO $ print l
+	k <- return $ getKind l
 	v <- return $ Var k n
 	liftIO $ do
-		putStr $ showT v ++ " := "
-		printT r
-		print r
-	t <- getType r
-	t2 <- getType t
+		putStr $ showT v ++ " == "
+		printT l
+--		print l
+	t <- getType l
+--	t2 <- getType t
 	liftIO $ do
 		putStr $ showT v ++ " :: "
 		printT t
 		putStr $ "\n"
-
-	addVarType v t
+	addVarSpec v (Nothing, t)
 
 
 
 
 main = run $ do
-	define "and" "#q:$$. _:$$"
-	define "Q" "_:$$"
-	define "A" "_:#Q"
-	define "B" "_:#Q"
-	define "z" "#Q"
-	define "X" "@and #Q @A @B "
+{-	define "pair" "#x:$$. _:$$"
+	define "pcon" "#t:$$. @x:#t. @y:#t. _:(#pair #t)"
+	define "int" "_:$$"
+	define "one" "_:#int"
+	define "x" "@pcon #int"
+	define "y" "@pcon #int @one @one"-}
+
+	define "and" "#a:$$. #b:$$. _:$$"
+	define "proj1" "#a:$$. #b:$$. @x:(#and #a #b). _:#a"
+	define "proj2" "#a:$$. #b:$$. @x:(#and #a #b). _:#b"
+	define "comb" "#a:$$. #b:$$. @x:#a. @y:#b. _:(#and #a #b)"
+	define "comutative" "#a:$$. #b:$$. @x:(#and #a #b). @comb #b #a (@proj2 #a #b @x) (@proj1 #a #b @x)"
+
+
 
 
 

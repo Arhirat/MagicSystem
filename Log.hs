@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -XGeneralizedNewtypeDeriving #-}
+
 
 module Log (
 	Log(..),
@@ -7,6 +9,7 @@ module Log (
 	showCallStack,
 	withFunS,
 	showLogS,
+	up,
 ) where
 
 
@@ -77,17 +80,8 @@ showLogS = liftLog . showLog
 
 
 
+newtype LogIO a = LogIO {runLogIO :: StateT [String] IO a} deriving (Monad, MonadIO)
 
-data LogIO a = LogIO {runLogIO :: StateT [String] IO a}
-
-instance Monad LogIO where
-	return x = LogIO $ return x
-	(LogIO ma) >>= amb = LogIO $ do
-		a <- ma
-		runLogIO $ amb a
-
-instance MonadIO LogIO where
-	liftIO x = LogIO $ liftIO x
 
 
 instance Log LogIO where
@@ -96,7 +90,6 @@ instance Log LogIO where
 		stack <- getCallStack
 		liftIO $ evalStateT (runLogIO a) (s:stack)
 	getCallStack = LogIO $ get
-
 
 
 withLogIO :: LogIO a -> IO a
