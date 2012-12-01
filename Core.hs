@@ -8,8 +8,8 @@ module Core (
 	addVarR,
 	err,
 	initL,
-	closeAxiom,
-	logVarList,
+	parse,
+	command,
 ) where
 
 import Control.Monad.State
@@ -20,29 +20,27 @@ import Debug.Trace
 
 
 import BaseType
-import Shower
 import Log
 import Change
 
 
+type Compile m = StateT Context (ErrorT Err m)
 
-type Compile m = StateT Context (ErrorT String m)
 
-
-err :: (Monad m) => String -> Compile m a
+err :: (Monad m) => Err -> Compile m a
 err = lift . throwError
 
 
 
 getVarType :: (Monad m) => Var -> Compile m L
-getVarType v = get >>= contextGet v (return . rGetType) (err $ "Variable " ++ showTS v ++ " not found")
+getVarType v = get >>= contextGet v (return . rGetType) (err $ ErrVariableNotFound v)
 
 
 addVarR :: (Monad m) => Var -> R -> Compile m ()
 addVarR v r = do
 	k1 <- return $ getKindVar v
 	k2 <- return $ getKind $ rGetType r
-	when (k1 + 1 /= k2) $ err $ "Kind " ++ showTS v ++ " mistmatch with " ++ showTS (rGetType r)
+	when (k1 + 1 /= k2) $ err $ ErrKindMistmatch v (rGetType r)
 	modify (contextAdd v r)
 
 
@@ -53,7 +51,7 @@ getUniqueVar = do
 
 pullVar :: (Monad m) => Var -> Compile m [(Var, R)]
 pullVar v = StateT $ \c -> case contextPull v c of
-	Nothing -> throwError $ "Variable " ++ showTS v ++ " not found"
+	Nothing -> throwError $ ErrVariableNotFound v
  	Just r -> return r
 
 
@@ -78,7 +76,7 @@ getType (Lam x a m) = do
 	k2 <- return $ getKind m
 	b <- getType m
 	case compare k1 k2 of
-		LT -> err $ "Kind " ++ showTS x ++ " less whan " ++ showTS m
+		LT -> err $ ErrKindMistmatch x m
  		EQ -> return $ Pi a b
 		GT -> return $ Lam x a b
 
@@ -141,20 +139,18 @@ ren s (Var i v) = Var i s
 
 apply :: (LiftLog m, Monad m) => L -> L -> Compile m L
 apply (Lam x t1 c) b = do
---	liftLog $ showLog "lambda app"
 	t2 <- getType b
 	eq <- runAllT $ eqL t1 t2
-	when (not eq) $ err $ "Mismatch lam. Need " ++ showTS t1 ++ ", given " ++ showTS t2
+	when (not eq) $ err $ ErrApplyMistmatch t1 t2
 	insert c x b
 
 apply (Pi t1 c) b = do
 	t2 <- getType b
---	liftLog $ showLog "pi app"
 	eq <- runAllT $ eqL t1 t2
-	when (not eq) $ err $ "Mismatch pi. Need " ++ showTS t1 ++ ", given " ++ showTS t2
+	when (not eq) $ err $ ErrApplyMistmatch t1 t2
 	return c
 
-apply t1 t2 = err $ "Can not apply" ++ showTS t1 ++ " to " ++ showTS t2
+apply t1 t2 = err $ ErrApply t1 t2
 
 
 eqL :: (Monad m) => L -> L -> AllT (Compile m)
@@ -191,7 +187,7 @@ initL (PiR a b) = do
  	b' <- initL b
 	k1 <- return $ getKind a'
 	k2 <- return $ getKind b'
-	when (k1 /= k2) $ err $ "Kind mistmatch " ++ showTS a' ++ " and " ++ showTS b'
+	when (k1 /= k2) $ err $ ErrKindMistmatch2 a' b'
 	return $ Pi a' b'
 initL (UndefR l) = do
 	l' <- initL l
@@ -200,17 +196,39 @@ initL (LamR v a b) = do
 	a' <- initL a
 	k1 <- return $ getKind a'
  	k2 <- return $ getKindVar v
-	when (k1 /= k2 + 1) $ err $ "Kind mistmatch " ++ showTS v ++ " and " ++ showTS a'
+	when (k1 /= k2 + 1) $ err $ ErrKindMistmatch v a'
 	b' <- local $ do
 		addVarR v (A a')
 		initL b
 	k3 <- return $ getKind b'
-	when (k2 < k3) $ err $ "Kind mistmatch " ++ showTS v ++ " and " ++ showTS b'
+	when (k2 < k3) $ err $ ErrKindMistmatch v b'
 	return $ Lam v a' b'
 
 
-closeAxiom :: (LiftLog m, Monad m) => Var -> [Var] -> Compile m ()
-closeAxiom v l = do
+{-logVarList :: (LiftLog m, Monad m) => Compile m ()
+logVarList = do
+	list <- get >>= return . contextGetVarList
+ 	flip mapM_ list $ \(v, r) -> do
+ 		liftLog $ showLog $ showTS v ++ " :: " ++ showTS (rGetType r)-}
+
+
+parse :: (Monad m) => ErrorT String m a -> Compile m a
+parse p = do
+	r <- lift $ lift $ runErrorT p
+	case r of
+		Right x -> return x
+		Left s -> err $ ErrParse s
+
+
+command :: (LiftLog m, Monad m) => Command -> Compile m ()
+command (CAxiom v lr) = do
+	l <- initL lr
+	addVarR v (A l)
+command (CSet v lr) = do
+	l <- initL lr
+	t <- getType l
+	addVarR v (S t)
+command (CClose v l) = do
 	flip mapM_ l $ \v -> getVarType v
 	i <- pullVar v
   	i' <- return $ flip execState [] $ do
@@ -222,9 +240,5 @@ closeAxiom v l = do
 	flip mapM_ i' $ \(v, r) -> addVarR v r
 
 
-logVarList :: (LiftLog m, Monad m) => Compile m ()
-logVarList = do
-	list <- get >>= return . contextGetVarList
- 	flip mapM_ list $ \(v, r) -> do
- 		liftLog $ showLog $ showTS v ++ " :: " ++ showTS (rGetType r)
+
 

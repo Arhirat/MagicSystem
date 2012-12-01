@@ -29,3 +29,13 @@ instance ShowT L where
 	getAFunc _ 30 = ALeft
 	getAFunc _ _ = ANone
 
+
+
+instance Show Err where
+	show (ErrSimple s) = s
+	show (ErrVariableNotFound v) = "Variable " ++ showTS v ++ " not found"
+	show (ErrKindMistmatch v l) = "Kind mistmatch " ++ showTS v ++ " and " ++ showTS l
+	show (ErrKindMistmatch2 l1 l2) = "Kind mistmatch " ++ showTS l1 ++ " and " ++ showTS l2
+	show (ErrApplyMistmatch l1 l2) = "Apply mistmatch " ++ showTS l1 ++ " and " ++ showTS l2
+	show (ErrApply l1 l2) = "Can not apply " ++ showTS l1 ++ " to " ++ showTS l2
+	show (ErrParse s) = "Parse error: " ++ s

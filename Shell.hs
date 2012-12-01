@@ -1,6 +1,10 @@
-
-
 module Shell where
+
+
+
+import Control.Monad.Error
+import Control.Monad.Identity
+import Control.Monad.State
 
 import BaseType
 import Reader
@@ -8,50 +12,42 @@ import Shower
 import Core
 import Log
 
-import Control.Monad.Error
-import Control.Monad.Identity
-import Control.Monad.State
-
 
 run :: Compile LogIO () -> IO ()
 run compile = do
 	rez <- withLogIO $ runErrorT $ runStateT compile contextEmpty
 	case rez of
-		Left s -> putStr $ "> " ++ s
+		Left s -> putStr $ "> " ++ show s
 		Right (t, c) -> putStr "> OK"
 
 
 set :: String -> String -> Compile LogIO ()
 set n s = do
-	lr <- lift $ parseLR s
---	liftIO $ print lr
-	l <- initL lr
---	liftIO $ print l
-	k <- return $ getKind l
-	v <- lift $ parseVar n
-	t <- getType l
-	addVarR v (S t)
---	liftIO $ putStr $ showT v ++ " == " ++ showT l ++ "\n"
-	liftIO $ putStr $ showT v ++ " :: " ++ showT t ++ "\n"
+	v <- parse $ parseVar n
+	lr <- parse $ parseLR s
+	command $ CSet v lr
+	check2 v
 
 axiom :: String -> String -> Compile LogIO ()
 axiom n s = do
-	lr <- lift $ parseLR s
-	l <- initL lr
-	v <- lift $ parseVar n
-	addVarR v (A l)
-	liftIO $ putStr $ showT v ++ " :: " ++ showT l ++ "\n"
-
+	lr <- parse $ parseLR s
+	v <- parse $ parseVar n
+	command $ CAxiom v lr
+	check2 v
 
 close :: String -> [String] -> Compile LogIO ()
 close a s = do
-	av <- lift $ parseVar a
-	sv <- lift $ mapM parseVar s
-	closeAxiom av sv
+	av <- parse $ parseVar a
+	sv <- parse $ mapM parseVar s
+	command $ CClose av sv
+
 
 check :: String -> Compile LogIO ()
-check s = do
-	v <- lift $ parseVar s
+check s = (parse $ parseVar s) >>= check2
+
+
+check2 :: Var -> Compile LogIO ()
+check2 v = do
 	t <- getVarType v
 	liftIO $ putStr $ showT v ++ " :: " ++ showT t ++ "\n"
 

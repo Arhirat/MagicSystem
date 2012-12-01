@@ -5,6 +5,8 @@ module BaseType (
 	L(..),
 	LR(..),
 	R(..),
+	Err(..),
+	Command(..),
 	Context,
 	contextGet,
 	contextAdd,
@@ -24,8 +26,8 @@ module BaseType (
 ) where
 
 
---import Data.Map as MAP (Map, empty, member, insert, (!))
 import Data.List (elemIndex, find)
+import Control.Monad.Error
 
 
 
@@ -56,6 +58,24 @@ data Context = Context {
 	getVar :: [(Var, R)],
 	getUnique :: Int
 }
+
+data Err =
+	ErrSimple String |
+	ErrVariableNotFound Var |
+	ErrKindMistmatch Var L |
+	ErrKindMistmatch2 L L |
+	ErrApplyMistmatch L L |
+	ErrApply L L |
+	ErrParse String
+
+instance Error Err where
+
+data Command =
+	CAxiom Var LR |
+	CSet Var LR |
+	CClose Var [Var]
+
+
 
 --type Spec = (Maybe L, L)
 
