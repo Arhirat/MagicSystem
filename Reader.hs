@@ -1,7 +1,7 @@
 
 module Reader (
 	parseLR,
-
+	parseVar,
 ) where
 
 import Parser

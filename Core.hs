@@ -1,18 +1,21 @@
 
 module Core (
 	getType,
+	getVarType,
 	Compile,
 	isUnit,
 	getKind,
-	addVarSpec,
+	addVarR,
 	err,
 	initL,
+	closeAxiom,
+	logVarList,
 ) where
 
 import Control.Monad.State
 import Control.Monad.Error
 import Control.Applicative
-import Data.List (elemIndex)
+import Data.List (elemIndex, elem)
 import Debug.Trace
 
 
@@ -31,12 +34,16 @@ err = lift . throwError
 
 
 
-getVarSpec :: (Monad m) => Var -> Compile m Spec
-getVarSpec v = get >>= contextGet v return (err $ "Variable " ++ showTS v ++ " not found")
+getVarType :: (Monad m) => Var -> Compile m L
+getVarType v = get >>= contextGet v (return . rGetType) (err $ "Variable " ++ showTS v ++ " not found")
 
 
-addVarSpec :: (Monad m) => Var -> Spec -> Compile m ()
-addVarSpec k t = modify (contextAdd k t)
+addVarR :: (Monad m) => Var -> R -> Compile m ()
+addVarR v r = do
+	k1 <- return $ getKindVar v
+	k2 <- return $ getKind $ rGetType r
+	when (k1 + 1 /= k2) $ err $ "Kind " ++ showTS v ++ " mistmatch with " ++ showTS (rGetType r)
+	modify (contextAdd v r)
 
 
 getUniqueVar :: (Monad m) => Compile m String
@@ -44,6 +51,10 @@ getUniqueVar = do
 	i <- StateT $ up contextGetUnique
 	return $ "var" ++ show i
 
+pullVar :: (Monad m) => Var -> Compile m [(Var, R)]
+pullVar v = StateT $ \c -> case contextPull v c of
+	Nothing -> throwError $ "Variable " ++ showTS v ++ " not found"
+ 	Just r -> return r
 
 
 local :: (Monad m) => Compile m a -> Compile m a
@@ -56,29 +67,20 @@ local c = do
 
 getType :: (LiftLog m) => L -> Compile m L
 getType (Unit i) = return$ Unit $ i+1
-getType (Value v (_, t)) = return t
-getType (Pi a b) = do
-	k1 <- return $ getKind a
-	k2 <- return $ getKind b
-	when (k1 /= k2) $ err $ "Kind mistmatch1: " ++ showTS a ++ " " ++ showTS b
-	return $ Unit $ k1 + 1
-
+getType (Value v t) = return t
+getType (Undef t) = return t
+getType (Pi a b) = return $ Unit $ getKind a + 1
+getType (App a b) = do
+	at <- getType a
+	apply at b
 getType (Lam x a m) = do
 	k1 <- return $ getKindVar x
-	k2 <- return $ getKind a
-	k3 <- return $ getKind m
-	when (k1 + 1/= k2) $ err $ "Kind mistmatch2: " ++ showTS a ++ " " ++ showTS m
+	k2 <- return $ getKind m
 	b <- getType m
-	case compare k1 k3 of
+	case compare k1 k2 of
 		LT -> err $ "Kind " ++ showTS x ++ " less whan " ++ showTS m
  		EQ -> return $ Pi a b
 		GT -> return $ Lam x a b
-
-getType (App a b) = do
-	at <- getType a -- reduct
-	apply at b
-
-getType (Undef t) = return t
 
 
 
@@ -100,7 +102,6 @@ insert l@(Lam v1 a b) v2 s = do
 	a <- insert a v2 s
 	b <- insert b v2 s
 	return $ Lam (ren i v1) a b
-
 insert (Undef l) v s = do
 	l' <- insert l v s
  	return $ Undef l'
@@ -182,25 +183,48 @@ initL (AppR a b) = do
  	b' <- initL b
 	return $ App a' b'
 initL (ValueR v) = do
-	s <- getVarSpec v
+	s <- getVarType v
 	return $ Value v s
 initL (UnitR i) = return $ Unit i
 initL (PiR a b) = do
 	a' <- initL a
  	b' <- initL b
+	k1 <- return $ getKind a'
+	k2 <- return $ getKind b'
+	when (k1 /= k2) $ err $ "Kind mistmatch " ++ showTS a' ++ " and " ++ showTS b'
 	return $ Pi a' b'
 initL (UndefR l) = do
 	l' <- initL l
 	return $ Undef l'
 initL (LamR v a b) = do
 	a' <- initL a
+	k1 <- return $ getKind a'
+ 	k2 <- return $ getKindVar v
+	when (k1 /= k2 + 1) $ err $ "Kind mistmatch " ++ showTS v ++ " and " ++ showTS a'
 	b' <- local $ do
-		addVarSpec v (Nothing, a')
+		addVarR v (A a')
 		initL b
+	k3 <- return $ getKind b'
+	when (k2 < k3) $ err $ "Kind mistmatch " ++ showTS v ++ " and " ++ showTS b'
 	return $ Lam v a' b'
 
 
+closeAxiom :: (LiftLog m, Monad m) => Var -> [Var] -> Compile m ()
+closeAxiom v l = do
+	flip mapM_ l $ \v -> getVarType v
+	i <- pullVar v
+  	i' <- return $ flip execState [] $ do
+ 		flip mapM_ i $ \(v2, r) -> if rIsA r
+ 			then modify $ \q -> flip map q $ \(v3, r2) -> (v3, rAddDep v2 (rGetType r) r2)
+ 			else if elem v2 l
+				then modify ((:) (v2, r))
+				else return ()
+	flip mapM_ i' $ \(v, r) -> addVarR v r
 
 
-
+logVarList :: (LiftLog m, Monad m) => Compile m ()
+logVarList = do
+	list <- get >>= return . contextGetVarList
+ 	flip mapM_ list $ \(v, r) -> do
+ 		liftLog $ showLog $ showTS v ++ " :: " ++ showTS (rGetType r)
 
